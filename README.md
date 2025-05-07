@@ -1,4 +1,4 @@
-<img width="640" alt="d7984783c3ab174a45b6af1ed037dd2" src="https://github.com/user-attachments/assets/3ab49415-b78b-4c49-9dc5-0142e13ba054" /># Voxel Drawing Tool
+# Voxel Drawing Tool
 
 A powerful browser-based voxel editor that transforms 2D images into customizable 3D voxel art using p5.js.
 
