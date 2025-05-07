@@ -2,7 +2,6 @@
 
 A powerful browser-based voxel editor that transforms 2D images into customizable 3D voxel art using p5.js.
 
-![image](https://github.com/user-attachments/assets/4ab66b85-3f96-4a49-bb51-7da339222080)
 
 ## Features
 
