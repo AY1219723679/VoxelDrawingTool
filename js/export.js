@@ -67,7 +67,7 @@ export function exportToOBJ() {
 
 // Export to OBJ with MTL
 export function exportToOBJWithMTL() {
-    console.log("Starting OBJ+MTL export...");
+    console.log("Starting OBJ+MTL export for Rhino compatibility...");
     
     if (state.voxels.length === 0) {
         console.error("Error: No voxels to export!");
@@ -81,8 +81,12 @@ export function exportToOBJWithMTL() {
         const filename = 'voxel_art';
         const mtlFilename = `${filename}.mtl`;
         
-        // Add MTL reference to OBJ file
+        // Add MTL reference to OBJ file - Moving this closer to top of file for Rhino
+        objLines.push(`# Voxel Art export - optimized for Rhino`);
+        objLines.push(`o VoxelModel`); // Main object name
         objLines.push(`mtllib ${mtlFilename}`);
+        objLines.push(`# Created with Voxel Drawing Tool`);
+        objLines.push(``);
         
         // Track unique colors to create materials
         const uniqueColors = {};
@@ -153,34 +157,50 @@ export function exportToOBJWithMTL() {
             
             // Create a material for this color if it doesn't exist
             if (!uniqueColors[colorKey]) {
-                const matName = `material_${materialIndex++}`;
+                // Create a descriptive material name compatible with Rhino
+                const matName = `mat_${r}_${g}_${b}`;
                 uniqueColors[colorKey] = { r, g, b, matName };
                 materialNames[colorKey] = matName;
                 
-                // Add material definition to MTL file
+                // Normalize RGB values to 0-1 range for MTL
+                const rn = (r/255).toFixed(6);
+                const gn = (g/255).toFixed(6);
+                const bn = (b/255).toFixed(6);
+                
+                // Add material definition to MTL file - optimized for Rhino compatibility
                 mtlLines.push(`newmtl ${matName}`);
-                mtlLines.push(`Ka 0.2 0.2 0.2`); // Ambient color
-                mtlLines.push(`Kd ${(r/255).toFixed(6)} ${(g/255).toFixed(6)} ${(b/255).toFixed(6)}`); // Diffuse color
-                mtlLines.push(`Ks 0.1 0.1 0.1`); // Specular color
-                mtlLines.push(`Ns 10.0`); // Specular exponent
-                mtlLines.push(`illum 2`); // Illumination model
+                
+                // For Rhino compatibility, include all properties in proper order
+                mtlLines.push(`Ka ${(r/255 * 0.8).toFixed(6)} ${(g/255 * 0.8).toFixed(6)} ${(b/255 * 0.8).toFixed(6)}`);
+                mtlLines.push(`Kd ${rn} ${gn} ${bn}`);
+                mtlLines.push(`Ks 0.7 0.7 0.7`); // Higher specular for more visibility
+                mtlLines.push(`Ns 50.0`); // Higher shininess
+                mtlLines.push(`d 1.0`); // Fully opaque
+                // Use illumination model 2 which includes specular highlights
+                mtlLines.push(`illum 2`);
                 mtlLines.push(``); // Empty line between materials
             }
         });
         
-        console.log(`Created ${materialIndex} unique materials`);
+        console.log(`Created ${Object.keys(uniqueColors).length} unique materials for Rhino compatibility`);
         
-        // Create OBJ file content with geometry and material assignments
-        let vertexOffset = 1; // OBJ indices start at 1
+        // Define all normal vectors first - Rhino tends to handle this better
+        objLines.push(`# Normal vectors`);
+        objLines.push(`vn 0.000000 0.000000 -1.000000`); // front (-z) - normal index 1
+        objLines.push(`vn 0.000000 0.000000 1.000000`);  // back (+z) - normal index 2
+        objLines.push(`vn -1.000000 0.000000 0.000000`); // left (-x) - normal index 3
+        objLines.push(`vn 1.000000 0.000000 0.000000`);  // right (+x) - normal index 4
+        objLines.push(`vn 0.000000 -1.000000 0.000000`); // bottom (-y) - normal index 5
+        objLines.push(`vn 0.000000 1.000000 0.000000`);  // top (+y) - normal index 6
+        objLines.push(``);
         
-        // Process each voxel
-        for (const voxel of state.voxels) {
-            const { x, y, z, color } = voxel;
-            const s = state.voxelSize / 2;
-            
-            // Extract RGB values to find the material
+        // Group voxels by material to reduce material switches, which helps Rhino
+        const voxelsByMaterial = {};
+        
+        // First pass - organize voxels by material
+        state.voxels.forEach(voxel => {
+            const { color } = voxel;
             let r, g, b;
-            let colorKey;
             
             if (typeof color === 'string') {
                 if (color.startsWith('#')) {
@@ -219,7 +239,25 @@ export function exportToOBJWithMTL() {
             r = Math.min(255, Math.max(0, Math.round(r || 0)));
             g = Math.min(255, Math.max(0, Math.round(g || 0)));
             b = Math.min(255, Math.max(0, Math.round(b || 0)));
-            colorKey = `${r}_${g}_${b}`;
+            
+            const colorKey = `${r}_${g}_${b}`;
+            const matName = materialNames[colorKey];
+            
+            if (!voxelsByMaterial[matName]) {
+                voxelsByMaterial[matName] = [];
+            }
+            
+            voxelsByMaterial[matName].push(voxel);
+        });
+        
+        // Now define all vertices first before faces - Rhino parses this better
+        let vertexIndex = 1;
+        const voxelVertices = {};
+        
+        // Generate all vertices first
+        for (const voxel of state.voxels) {
+            const { x, y, z } = voxel;
+            const s = state.voxelSize / 2;
             
             // Define 8 vertices of the cube
             const vertices = [
@@ -233,45 +271,94 @@ export function exportToOBJWithMTL() {
                 [x - s, y + s, z + s]   // 7: back top left
             ];
             
-            // Add material definition for this cube
-            objLines.push(`usemtl ${materialNames[colorKey]}`);
+            // Record the starting index of this voxel's vertices
+            voxelVertices[`${x}_${y}_${z}`] = vertexIndex;
             
             // Add vertices to OBJ
             for (const v of vertices) {
                 objLines.push(`v ${v[0].toFixed(6)} ${v[1].toFixed(6)} ${v[2].toFixed(6)}`);
             }
             
-            // Define triangular faces (12 triangles, 6 faces)
-            // Each face needs to be triangulated
-            const triangles = [
-                // Front face (-z)
-                [0, 1, 2], [0, 2, 3],
-                // Back face (+z)
-                [5, 4, 7], [5, 7, 6],
-                // Left face (-x)
-                [4, 0, 3], [4, 3, 7],
-                // Right face (+x)
-                [1, 5, 6], [1, 6, 2],
-                // Bottom face (-y)
-                [0, 4, 5], [0, 5, 1],
-                // Top face (+y)
-                [3, 2, 6], [3, 6, 7]
-            ];
+            vertexIndex += 8;
+        }
+        
+        objLines.push(``);
+        
+        // Now output faces by material group
+        for (const matName in voxelsByMaterial) {
+            // Create a material group
+            objLines.push(`g material_group_${matName}`);
+            objLines.push(`usemtl ${matName}`);
             
-            // Add faces to OBJ
-            for (const triangle of triangles) {
-                const indices = triangle.map(i => i + vertexOffset);
-                objLines.push(`f ${indices[0]} ${indices[1]} ${indices[2]}`);
+            const voxelsInGroup = voxelsByMaterial[matName];
+            
+            // Process all voxels in this material group
+            for (const voxel of voxelsInGroup) {
+                const { x, y, z } = voxel;
+                const vertexOffset = voxelVertices[`${x}_${y}_${z}`];
+                
+                // Individual voxel grouping
+                objLines.push(`g voxel_${x}_${y}_${z}`);
+                
+                // Define faces with vertex normals (optimized for Rhino)
+                const faces = [
+                    // Front face (-z) - normal index 1
+                    [`${vertexOffset}//${1}`, `${vertexOffset + 1}//${1}`, `${vertexOffset + 2}//${1}`],
+                    [`${vertexOffset}//${1}`, `${vertexOffset + 2}//${1}`, `${vertexOffset + 3}//${1}`],
+                    
+                    // Back face (+z) - normal index 2
+                    [`${vertexOffset + 5}//${2}`, `${vertexOffset + 4}//${2}`, `${vertexOffset + 7}//${2}`],
+                    [`${vertexOffset + 5}//${2}`, `${vertexOffset + 7}//${2}`, `${vertexOffset + 6}//${2}`],
+                    
+                    // Left face (-x) - normal index 3
+                    [`${vertexOffset + 4}//${3}`, `${vertexOffset}//${3}`, `${vertexOffset + 3}//${3}`],
+                    [`${vertexOffset + 4}//${3}`, `${vertexOffset + 3}//${3}`, `${vertexOffset + 7}//${3}`],
+                    
+                    // Right face (+x) - normal index 4
+                    [`${vertexOffset + 1}//${4}`, `${vertexOffset + 5}//${4}`, `${vertexOffset + 6}//${4}`],
+                    [`${vertexOffset + 1}//${4}`, `${vertexOffset + 6}//${4}`, `${vertexOffset + 2}//${4}`],
+                    
+                    // Bottom face (-y) - normal index 5
+                    [`${vertexOffset}//${5}`, `${vertexOffset + 4}//${5}`, `${vertexOffset + 5}//${5}`],
+                    [`${vertexOffset}//${5}`, `${vertexOffset + 5}//${5}`, `${vertexOffset + 1}//${5}`],
+                    
+                    // Top face (+y) - normal index 6
+                    [`${vertexOffset + 3}//${6}`, `${vertexOffset + 2}//${6}`, `${vertexOffset + 6}//${6}`],
+                    [`${vertexOffset + 3}//${6}`, `${vertexOffset + 6}//${6}`, `${vertexOffset + 7}//${6}`]
+                ];
+                
+                // Add faces to OBJ
+                for (const face of faces) {
+                    objLines.push(`f ${face[0]} ${face[1]} ${face[2]}`);
+                }
             }
             
-            vertexOffset += 8; // Move to next 8 vertices for next voxel
+            // Add separator between material groups
+            objLines.push(``);
         }
+        
+        // Create a special visibility indicator file for Rhino
+        const visLines = [];
+        visLines.push(`# Visibility helper for Rhino`);
+        visLines.push(`# This file helps ensure materials are visible in Rhino`);
+        visLines.push(`# Place both .obj and .mtl files in the same directory`);
+        visLines.push(`# Then import the .obj file with "Import Materials" checked`);
+        
+        const visFilename = `${filename}_import_instructions.txt`;
+        const visBlob = new Blob([visLines.join('\n')], { type: 'text/plain' });
+        const visUrl = URL.createObjectURL(visBlob);
         
         // Convert to Blob and trigger download for OBJ
         const objContent = objLines.join('\n');
         const objBlob = new Blob([objContent], { type: 'text/plain' });
         const objUrl = URL.createObjectURL(objBlob);
         
+        // Convert to Blob and trigger download for MTL
+        const mtlContent = mtlLines.join('\n');
+        const mtlBlob = new Blob([mtlContent], { type: 'text/plain' });
+        const mtlUrl = URL.createObjectURL(mtlBlob);
+        
+        // Download all files
         const objLink = document.createElement('a');
         objLink.href = objUrl;
         objLink.download = `${filename}.obj`;
@@ -280,11 +367,6 @@ export function exportToOBJWithMTL() {
         objLink.click();
         document.body.removeChild(objLink);
         URL.revokeObjectURL(objUrl);
-        
-        // Convert to Blob and trigger download for MTL
-        const mtlContent = mtlLines.join('\n');
-        const mtlBlob = new Blob([mtlContent], { type: 'text/plain' });
-        const mtlUrl = URL.createObjectURL(mtlBlob);
         
         const mtlLink = document.createElement('a');
         mtlLink.href = mtlUrl;
@@ -295,8 +377,17 @@ export function exportToOBJWithMTL() {
         document.body.removeChild(mtlLink);
         URL.revokeObjectURL(mtlUrl);
         
-        console.log("OBJ+MTL export completed successfully!");
-        alert(`Export complete! Downloaded:\n- ${filename}.obj\n- ${mtlFilename}\n\nThese files work together - keep them in the same folder when importing to Rhino.`);
+        const visLink = document.createElement('a');
+        visLink.href = visUrl;
+        visLink.download = visFilename;
+        visLink.style.display = 'none';
+        document.body.appendChild(visLink);
+        visLink.click();
+        document.body.removeChild(visLink);
+        URL.revokeObjectURL(visUrl);
+        
+        console.log("OBJ+MTL export completed successfully with enhanced Rhino compatibility!");
+        alert(`Export complete! Downloaded:\n- ${filename}.obj\n- ${mtlFilename}\n- ${visFilename}\n\nThese files work together - keep them in the same folder when importing to Rhino.\nIMPORTANT: When importing to Rhino, be sure to check "Import Materials" in the import options.`);
     } catch (error) {
         console.error("Error exporting to OBJ+MTL:", error);
         alert("Error exporting to OBJ+MTL: " + error.message);
