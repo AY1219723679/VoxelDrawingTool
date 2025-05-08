@@ -1,4 +1,4 @@
-# Voxel Drawing Tool
+# 3dPix: Printable Voxel Arts
 
 
 
